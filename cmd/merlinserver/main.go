@@ -21,7 +21,6 @@ import (
 	// Standard
 	"flag"
 	"os"
-	"path/filepath"
 
 	// 3rd Party
 	"github.com/fatih/color"
@@ -30,9 +29,7 @@ import (
 	"github.com/Ne0nd0g/merlin/pkg"
 	"github.com/Ne0nd0g/merlin/pkg/banner"
 	"github.com/Ne0nd0g/merlin/pkg/cli"
-	"github.com/Ne0nd0g/merlin/pkg/core"
 	"github.com/Ne0nd0g/merlin/pkg/logging"
-	"github.com/Ne0nd0g/merlin/pkg/servers/http2"
 )
 
 // Global Variables
@@ -41,21 +38,14 @@ var build = "nonRelease"
 func main() {
 	logging.Server("Starting Merlin Server version " + merlin.Version + " build " + merlin.Build)
 
-	flag.BoolVar(&core.Verbose, "v", false, "Enable verbose output")
-	flag.BoolVar(&core.Debug, "debug", false, "Enable debug output")
-	port := flag.Int("p", 443, "Merlin Server Port")
-	ip := flag.String("i", "127.0.0.1", "The IP address of the interface to bind to")
-	proto := flag.String("proto", "h2", "Protocol for the agent to connect with [h2, hq]")
-	crt := flag.String("x509cert", filepath.Join(string(core.CurrentDir), "data", "x509", "server.crt"),
-		"The x509 certificate for the HTTPS listener")
-	key := flag.String("x509key", filepath.Join(string(core.CurrentDir), "data", "x509", "server.key"),
-		"The x509 certificate key for the HTTPS listener")
 	flag.Usage = func() {
 		color.Blue("#################################################")
 		color.Blue("#\t\tMERLIN SERVER\t\t\t#")
 		color.Blue("#################################################")
 		color.Blue("Version: " + merlin.Version)
 		color.Blue("Build: " + build)
+		color.Yellow("Merlin Server does not take any command line arguments")
+		color.Yellow("Visit the Merlin wiki for additional information: https://merlin-c2.readthedocs.io/en/latest/")
 		flag.PrintDefaults()
 		os.Exit(0)
 	}
@@ -66,25 +56,5 @@ func main() {
 	color.Blue("\t\t   Build: %s", build)
 
 	// Start Merlin Command Line Interface
-	go cli.Shell()
-
-	// Start Merlin Server to listen for agents
-	server, err := http2.New(*ip, *port, *proto, *key, *crt)
-	if err != nil {
-		color.Red(err.Error())
-	} else {
-		err := server.Run()
-		if err != nil {
-			color.Red("[!]There was an error starting the server")
-		}
-	}
+	cli.Shell()
 }
-
-// TODO Add session ID
-// TODO add job and its ID to the channel immediately after input
-// TODO add warning for using distributed TLS cert
-// TODO change default useragent from Go-http-client/2.0
-// TODO add CSRF tokens
-// TODO check if agentLog exists even outside of InitialCheckIn
-// TODO readline for file paths to use with upload
-// TODO handle file names containing a space for upload/download

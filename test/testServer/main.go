@@ -1,6 +1,6 @@
 // Merlin is a post-exploitation command and control framework.
 // This file is part of Merlin.
-// Copyright (C) 2019  Russel Van Tuyl
+// Copyright (C) 2021  Russel Van Tuyl
 
 // Merlin is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -19,22 +19,37 @@ package testserver
 
 import (
 	// Standard
+	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/json"
+	"encoding/gob"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"math/big"
 	"net"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
+	// 3rd Party
+	"github.com/cretz/gopaque/gopaque"
+	"github.com/satori/go.uuid"
+	"gopkg.in/square/go-jose.v2"
+	"gopkg.in/square/go-jose.v2/jwt"
+
 	// Merlin
+	"github.com/Ne0nd0g/merlin/pkg/agents"
+	"github.com/Ne0nd0g/merlin/pkg/core"
+	"github.com/Ne0nd0g/merlin/pkg/handlers"
 	"github.com/Ne0nd0g/merlin/pkg/messages"
+	"github.com/Ne0nd0g/merlin/pkg/opaque"
+	"github.com/Ne0nd0g/merlin/pkg/server/jobs"
 )
 
 func (ts *TestServer) handler(w http.ResponseWriter, r *http.Request) {
@@ -42,36 +57,131 @@ func (ts *TestServer) handler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 		return
 	}
-	bod := ""
 
-	var payload json.RawMessage
-	j := messages.Base{
-		Payload: &payload,
-	}
-	err := json.NewDecoder(r.Body).Decode(&j)
-	if err != nil {
-		log.Fatalf("There was an error:\r\n%s", err.Error())
+	// Uses Merlin HTTP Handler
+	if r.RequestURI == "/merlin" {
+		ts.ctx.AgentHTTP(w, r)
 	}
 
-	switch r.UserAgent() {
-	case "BrokenJSON":
-		w.Header().Set("Content-Type", "application/json")
-		bod = "{this is hella broken"
+	// Make sure the message has a JWT
+	token := r.Header.Get("Authorization")
+	if token == "" {
+		w.WriteHeader(404)
+		return
+	}
+	//Read the request message until EOF
+	requestBytes, errRequestBytes := ioutil.ReadAll(r.Body)
+	if errRequestBytes != nil {
+		fmt.Printf("there was an error reading the request message:\r\n%s\r\n", errRequestBytes.Error())
+		w.WriteHeader(500)
+		return
+	}
+
+	// Decode gob to JWE string
+	var jweString string
+	errDecode := gob.NewDecoder(bytes.NewReader(requestBytes)).Decode(&jweString)
+	if errDecode != nil {
+		fmt.Printf("there was an error decoding the message from gob to JWE string:\r\n%s\r\n", errDecode.Error())
+		w.WriteHeader(500)
+		return
+	}
+
+	// Validate JWT and get claims
+	var agentID uuid.UUID
+	var errValidate error
+
+	agentID, errValidate = validateJWT(strings.Split(token, " ")[1], []byte("xZF7fvaGD6p2yeLyf9i7O9gBBHk05B0u"))
+	if errValidate != nil {
+		// Validate JWT using interface PSK; Used by unauthenticated agents
+		hashedKey := sha256.Sum256([]byte("test"))
+		key := hashedKey[:]
+		agentID, errValidate = validateJWT(strings.Split(token, " ")[1], key)
+		if errValidate != nil {
+			w.WriteHeader(404)
+			return
+		}
+	}
+
+	key, errKey := agents.GetEncryptionKey(agentID)
+	if errKey != nil {
+		w.WriteHeader(404)
+		return
+	}
+
+	// Decrypt JWE
+	j, errDecryptPSK := decryptJWE(jweString, key)
+	if errDecryptPSK != nil {
+		fmt.Printf("there was an error decrypting the JWE on the server:\r\n%s\r\n", errDecryptPSK.Error())
+		w.WriteHeader(500)
+		return
 	}
 
 	//fmt.Println(fmt.Sprintf("Request: %+v\nBody:%+v", r, j)) //uncomment here if you want to print out exactly what the test server receives
-	respCode := http.StatusOK
-	//perform logic here to determine if the agent is behaving as expected
-	w.WriteHeader(respCode)
-	_, errF := fmt.Fprintln(w, bod)
-	if errF != nil {
-		log.Fatalf("There was an error writing the message:\r\n%s", errF)
+
+	var returnMessage messages.Base
+	var err error
+
+	// User Agent based actions
+	switch r.UserAgent() {
+	case "invalidMessageBaseType":
+		returnMessage.Type = 200
+	}
+
+	// Message type based action
+	switch j.Type {
+	case messages.JOBS:
+		returnMessage, err = jobs.Handler(j)
+	case messages.OPAQUE:
+		if j.Payload.(opaque.Opaque).Type == opaque.AuthComplete {
+			returnMessage, err = handlers.OPAQUEHandler(j.ID, j.Payload.(opaque.Opaque))
+		} else {
+			returnMessage, err = handlers.OPAQUEUnAuthHandler(j.ID, j.Payload.(opaque.Opaque), gopaque.CryptoDefault.NewKey(nil))
+		}
+	case 201:
+		w.Header().Set("Content-Type", "application/octet-stream")
+		errBadPayload := gob.NewEncoder(w).Encode([]byte("Hack the planet!"))
+		if errBadPayload != nil {
+			fmt.Println(errBadPayload.Error())
+		}
+	default:
+
+	}
+
+	if err != nil {
+		log.Fatal(err)
+	}
+	returnMessage.ID = agentID
+	// Encode messages.Base into a gob
+	returnMessageBytes := new(bytes.Buffer)
+	errReturnMessageBytes := gob.NewEncoder(returnMessageBytes).Encode(returnMessage)
+	if errReturnMessageBytes != nil {
+		fmt.Printf("there was an error encoding the return message into a gob:\r\n%s\r\n", errReturnMessageBytes.Error())
+		w.WriteHeader(500)
+		return
+	}
+
+	// Get JWE
+	jwe, errJWE := core.GetJWESymetric(returnMessageBytes.Bytes(), key[:])
+	if errJWE != nil {
+		fmt.Printf("there was an error encrypting the message into a JWE:\r\n%s\r\n", errJWE.Error())
+		w.WriteHeader(500)
+		return
+	}
+
+	// Encode JWE to GOB and send it to the agent
+	w.Header().Set("Content-Type", "application/octet-stream")
+	errEncode := gob.NewEncoder(w).Encode(jwe)
+	if errEncode != nil {
+		fmt.Printf("there was an error encoding the JWE into a gob:\r\n%s\r\n", errEncode.Error())
+		w.WriteHeader(500)
+		return
 	}
 }
 
 //TestServer is a webserver instance that facilitates functional testing of code that requires the ability to send web requests
 type TestServer struct {
 	tes *testing.T
+	ctx handlers.HTTPContext
 }
 
 //since tls/pki is such a pain this generate them every time
@@ -109,15 +219,18 @@ func generateTLSConfig() *tls.Config {
 		Certificate: [][]byte{crtBytes},
 		PrivateKey:  priv,
 	}
+	/* #nosec G402 */
+	// G402: TLS InsecureSkipVerify set true. (Confidence: HIGH, Severity: HIGH) Allowed for testing
+	// G402 (CWE-295): TLS MinVersion too low. (Confidence: HIGH, Severity: HIGH)
+	// TLS version is not configured to facilitate dynamic JA3 configurations
 	return &tls.Config{
 		Certificates: []tls.Certificate{crt},
 		NextProtos:   []string{"h2", "hq"},
 	}
 }
 
-//Start starts the test HTTP server
+//Start starts the test HTTP server on the input port
 func (TestServer) Start(port string, finishedTest, setup chan struct{}, t *testing.T) {
-
 	s := http.NewServeMux()
 	ts := TestServer{
 		tes: t,
@@ -128,6 +241,13 @@ func (TestServer) Start(port string, finishedTest, setup chan struct{}, t *testi
 	srv.TLSConfig = generateTLSConfig()
 	srv.Handler = s
 	srv.Addr = "127.0.0.1:" + port
+
+	ctx := handlers.HTTPContext{
+		PSK:       "test",
+		JWTKey:    []byte(core.RandStringBytesMaskImprSrc(32)),
+		OpaqueKey: gopaque.CryptoDefault.NewKey(nil),
+	}
+	ts.ctx = ctx
 	go func() {
 		ln, e := net.Listen("tcp", srv.Addr)
 
@@ -173,4 +293,64 @@ func (TestServer) Start(port string, finishedTest, setup chan struct{}, t *testi
 
 	close(setup)
 	<-finishedTest //this is an ultra gross hack :(
+}
+
+// decryptJWE takes provided JWE string and decrypts it using the per-agent key
+func decryptJWE(jweString string, key []byte) (messages.Base, error) {
+	var m messages.Base
+
+	// Parse JWE string back into JSONWebEncryption
+	jwe, errObject := jose.ParseEncrypted(jweString)
+	if errObject != nil {
+		return m, fmt.Errorf("there was an error parseing the JWE string into a JSONWebEncryption object:\r\n%s", errObject)
+	}
+
+	// Decrypt the JWE
+	jweMessage, errDecrypt := jwe.Decrypt(key)
+	if errDecrypt != nil {
+		return m, fmt.Errorf("there was an error decrypting the JWE:\r\n%s", errDecrypt.Error())
+	}
+
+	// Decode the JWE payload into a messages.Base struct
+	errDecode := gob.NewDecoder(bytes.NewReader(jweMessage)).Decode(&m)
+	if errDecode != nil {
+		return m, fmt.Errorf("there was an error decoding JWE payload message sent by an agent:\r\n%s", errDecode.Error())
+	}
+
+	return m, nil
+}
+
+// validateJWT validates the provided JSON Web Token
+func validateJWT(agentJWT string, key []byte) (uuid.UUID, error) {
+	var agentID uuid.UUID
+
+	claims := jwt.Claims{}
+
+	// Parse to make sure it is a valid JWT
+	nestedToken, err := jwt.ParseSignedAndEncrypted(agentJWT)
+	if err != nil {
+		return agentID, fmt.Errorf("there was an error parsing the JWT:\r\n%s", err.Error())
+	}
+
+	// Decrypt JWT
+	token, errToken := nestedToken.Decrypt(key)
+	if errToken != nil {
+		return agentID, fmt.Errorf("there was an error decrypting the JWT:\r\n%s", errToken.Error())
+	}
+
+	// Deserialize the claims and validate the signature
+	errClaims := token.Claims(key, &claims)
+	if errClaims != nil {
+		return agentID, fmt.Errorf("there was an deserializing the JWT claims:\r\n%s", errClaims.Error())
+	}
+
+	// Validate claims
+	errValidate := claims.Validate(jwt.Expected{
+		Time: time.Now(),
+	})
+	if errValidate != nil {
+		return agentID, errValidate
+	}
+	agentID = uuid.FromStringOrNil(claims.ID)
+	return agentID, nil
 }

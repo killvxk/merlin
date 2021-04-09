@@ -1,6 +1,6 @@
 // Merlin is a post-exploitation command and control framework.
 // This file is part of Merlin.
-// Copyright (C) 2019  Russel Van Tuyl
+// Copyright (C) 2021  Russel Van Tuyl
 
 // Merlin is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -37,22 +37,29 @@ func init() {
 
 	// Server Logging
 	if _, err := os.Stat(filepath.Join(core.CurrentDir, "data", "log", "merlinServerLog.txt")); os.IsNotExist(err) {
-		errM := os.Mkdir(filepath.Join(core.CurrentDir, "data", "log"), os.ModeDir)
+		errM := os.MkdirAll(filepath.Join(core.CurrentDir, "data", "log"), 0750)
 		if errM != nil {
-			message("warn", "There was an error creating the log directory")
+			message("warn", "there was an error creating the log directory")
 		}
-		_, errC := os.Create(filepath.Join(core.CurrentDir, "data", "log", "merlinServerLog.txt"))
+		serverLog, errC := os.Create(filepath.Join(core.CurrentDir, "data", "log", "merlinServerLog.txt"))
 		if errC != nil {
-			message("warn", "[!]There was an error creating the merlinServerLog.txt file")
+			message("warn", "there was an error creating the merlinServerLog.txt file")
+			return
+		}
+		// Change the file's permissions
+		errChmod := os.Chmod(serverLog.Name(), 0600)
+		if errChmod != nil {
+			message("warn", fmt.Sprintf("there was an error changing the file permissions for the agent log:\r\n%s", errChmod.Error()))
 		}
 		if core.Debug {
 			message("debug", fmt.Sprintf("Created server log file at: %s\\data\\log\\merlinServerLog.txt", core.CurrentDir))
 		}
 	}
+
 	var errLog error
 	serverLog, errLog = os.OpenFile(filepath.Join(core.CurrentDir, "data", "log", "merlinServerLog.txt"), os.O_APPEND|os.O_WRONLY, 0600)
 	if errLog != nil {
-		message("warn", "There was an error with the Merlin Server log file")
+		message("warn", "there was an error with the Merlin Server log file")
 		message("warn", errLog.Error())
 	}
 }
@@ -61,7 +68,8 @@ func init() {
 func Server(logMessage string) {
 	_, err := serverLog.WriteString(fmt.Sprintf("[%s]%s\r\n", time.Now().UTC().Format(time.RFC3339), logMessage))
 	if err != nil {
-		message("warn", "There was an error writing to the Merlin Server log file")
+		message("warn", "there was an error writing to the Merlin Server log file")
+		message("warn", err.Error())
 	}
 }
 

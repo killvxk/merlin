@@ -4,6 +4,172 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## 0.10.0 - 2021-02-13
+
+### Added
+
+- Added `windows/x64/go/exec/createProcess` extended module with redirected STDOUT/STDERR over anonymous pipes
+- Added `windows/x64/go/exec/donut` extended module that leveraged [go-dounut](https://github.com/binject/go-donut)
+- Added `windows/x64/csharp/misc/SharpGen` extended module that leverages [SharpGen](https://github.com/cobbr/SharpGen)
+  - Requires [.NET Core 2.1 SDK](https://dotnet.microsoft.com/download/dotnet-core/2.1) to be manually installed by the operator
+- Added `execute-assembly`, `execute-pe`, and `sharpgen` commands to Agent menu
+- Added `ExecuteAssembly`, `ExecutePE`, and `SharpGen` functions to Agent API
+- New Jobs structure so that multiple jobs and results can be sent between client and server during a single interaction
+- Job processing checks to ensure returned results have a valid request token and had not previously completed
+- Created constants for message types for easier comparison and switching
+- Added a new `jobs` command to view created and sent jobs
+- Added a new `clear` command to remove any jobs that have not been sent to the agent
+- Added `killdate`, `maxretry`, `useragent`, `padding`, `skew` to Merlin Agent command line arguments and Makefile
+- Added checks to OPAQUE handling to ensure resiliency if server is not available or has an error during registration
+- Added Makefile `agent-windows-debug` build target to enable viewing verbose and debug messages
+- Added Mythic client so [Merlin](https://github.com/MythicAgents/merlin) agent can be used with the [Mythic](https://github.com/its-a-feature/mythic) Framework
+
+### Changes
+
+- All commands typed into the `Merlin»` are immediately parsed with [go-shellwords](https://github.com/mattn/go-shellwords)
+- Removed `go-shellwords` processing from Agent API functions CD, Download, Upload, and LS
+- Modified agent structure to contain an input and out job channel
+- Changed Agent go routine from messageHandler to function that continuously checks the job channel
+- Job results are returned when the agent checks in again, not immediately after executed
+- Moved OPAQUE functions to its own package at `pkg/opaque`
+- Reduced base message payload types to just opaque, jobs, and checkin; Jobs payload now contains all other types
+- Removed argument parsing from Agent's exec command. All parsing is done server side before being sent to the agent
+- Removed RSA key exchange since it wasn't being used for anything
+- Moved functions that output tables to the agent API that returns rows; CLI package prints them
+- Removed CLI completer functions from `pkg/agents` and implemented functionality in agent API and CLI package
+- Restructured Merlin Agent code into multiple go files
+- Created generic MerlinClient interface to facilitate using different protocols
+- Changed HTTP server timeout from 10 seconds to 30 seconds
+- Changed the `shell` command to actually use the operating system's default shell
+- Changed the old `cmd` & `shell` commands to just the `run` which executes the program directly without a shell
+
+## Removed
+
+- Removed the `cmd` command from the Agents menu
+
+## 0.9.1 - 2020-09-23
+
+### Fixed
+
+- Modules were not sending the first value from the modules commands section
+- [Pull 97](https://github.com/Ne0nd0g/merlin/pull/97) - Incorrectly validated the module and agent platforms when the agent was set to "all"
+
+## 0.9.0 - 2020-09-13
+
+### Added
+
+- Incorporated a fork of `github.com/CUCyber/ja3client` allowing the Merlin agent to establish TLS connections from a JA3 signature
+- Added `ja3` to agent.New() function
+- Added `-ja3` to agent command line arguments and JA3 to Make file for hard coding initial signature
+- Added `PSK=` to Make file
+- Added `set ja3` to Agent menu allowing operators to change TLS client profile at any time
+- Created new `merlinClient` interface to handle abstract http clients and changed the Agent.Client to that interface
+- Updated Dockerfile to support Go modules
+- Added support for plain-text HTTP/1.1 (http) and plain-text HTTP/2.0 (h2c)
+- Increased initial JWT lifetime from 10 seconds to 60 seconds
+- BASH module `linux\x64\bash\exec\bash.json` to run a single BASH command across all agents
+- PowerShell module `windows\x64\powershell\exec\powershell.json` to run a single PowerShell command across all agents
+- macOS Orchard module `darwin\x64\javascript\enumeration\orchard.json` a JavaScript for Automation (JXA) tool to do Active Directory enumeration
+- macOS HealthInspector module `darwin\x64\javascript\enumeration\healthinspector.json` a JXA situational awareness helper by simply reading specific files on a filesystem
+- macOS Bifrost module `darwin\x64\objective-c\kerberos\bifrost.json` an Objective-C library and console to interact with Heimdal APIs for macOS Kerberos
+- macOS Venator module  `darwin\x64\python\enumeration\venator.json` a python tool used to gather data for proactive detection of malicious activity on macOS devices
+- macOS SwiftBelt module `darwin\x64\swift\enumeration\swiftbelt.json` A MacOS enumerator similar to @harmjoy's Seatbelt
+- Added `unset` command to modules to reset an option to nil
+- Job result messages now include the agent ID
+- Added new Listeners menu to create or remove multiple agent listeners per running Merlin Server instance
+- Added new `servers` and `listeners` packages to handle new Listeners menu
+- A single listener can now handle multiple URLS instead of just `/`
+- Can enable/disable verbose and debug output from CLI main menu with `set vervose true`
+- Added API packages for agents, listeners, modules, and messages to separate the CLI from the server
+- Added a channel for user messages that the CLI reads from and then prints them to STDOUT
+- Added 4 modules from the D(COM) V(ulnerability) S(canner) Framework to `windows\x64\powershell\lateral\dcom"`
+- Added Sphinx documentation to `docs\` to replace GitHub wiki with ReadTheDocs
+
+## Fixed
+
+- Catch errors returned when starting a server (i.e insufficient privileges to bind to a port)
+- hq listener would fail when in-memory x.509 certificates were used
+- Invoke-M.i.m.i.k.a.t.z module points to the updated version of M.i.m.i.k.a.t.z (2.2.0) in the Empire 3.0 repository
+- [Issue 88](https://github.com/Ne0nd0g/merlin/issues/88) - Set option will now take all arguments after a space
+- Added module type to LinEnum, MimiPenguin, and SwapDigger
+- [Issue 71](https://github.com/Ne0nd0g/merlin/issues/71) - Run a module against all agents
+
+## Changed
+
+- Made module variables case-insensitive. Values will still match input case
+- Moved `GetTLSCertificates()` and `CheckInsecureFingerprint()` to utils package
+- Moved JWT create, validate, decrypt functions to the utils package
+- Moved Agent handling code to a new handlers package
+- All packages _should_ be sending messages to the CLI through the message API package
+- Upgraded gopaque library to v0.1.0
+- Upgraded kyber library to v3.0.12
+
+## Removed
+
+- Removed all command line arguments from Merlin Server executable in favor of run-time Listeners menu
+
+## Security
+
+- OPAQUE go library used static decryption key and allowed EnvU to be decrypted without the correct password (PwdU)
+  [gopaque - Issue 2](https://github.com/cretz/gopaque/issues/2)
+- Symmetric encryption key was use with OPAQUE User Authentication instead of OPAQUE password (PwdU)
+
+## 0.8.1 - 2019-10-08
+
+### Fixed
+
+- [Issue 77](https://github.com/Ne0nd0g/merlin/issues/77) - Set server and agent log files with `0640` permissions
+
+## 0.8.0 - 2019-08-20
+
+### Added
+
+- Network requests and responses are now encrypted in to a JWE
+- Password Based Authenticated Key Exchange (PAKE) using OPAQUE technique
+- Server and agent have new pre-shared key (psk) command line flag
+- All network requests now contain an encrypted JWT in an Authorization header that are only valid for the agent's lifetime
+- RSA keys are exchanged between server and agent, but not currently used
+- Added `PSK=` to Make file so the binaries can be hard coded with the PSK
+- Added Merlin server identification tool dubbed PRISM
+- Added gcflags & asmflags trimpaths to remove _some_ of the file path strings in output agent binary files
+- Added http/1.1 support
+- Added support for user defined HTTP proxy with agent `-proxy` command line flag; Only works with HTTP/1.1
+- Added `PROXY=` to Make file so the binaries can be hard coded with the proxy
+- Added PRISM application to detect a Merlin server
+- Added in CLI option to set HTTP Host header for domain fronting
+- [Pull 72](https://github.com/Ne0nd0g/merlin/pull/72) - Added a Linux module that will hide the Merlin process from tools that walk the /proc filesystem by @ForensicITGuy
+- [Pull 73](https://github.com/Ne0nd0g/merlin/pull/74) - Added 5 Linux evasion and persistence modules by @ForensicITGuy
+- [Pull 76](https://github.com/Ne0nd0g/merlin/pull/76) - Prompt user to confirm exit or quit by [Daniel Roberson](https://github.com/droberson)
+
+### Fixed
+
+- [Pull 74](https://github.com/Ne0nd0g/merlin/pull/74) - Fixed issued that would crash the agent if the skew was set to 0 by @alexbires
+- [Issue 54](https://github.com/Ne0nd0g/merlin/issues/54) - Prompt to exit server when user types "quit" or "exit"
+
+### Changed
+
+- Replaced JSON encoding with Go's gob encoding format
+- Server does not receive agent information/configuration until after password authentication/payload encryption
+- Base messages now contain a token; used to send an agent an encrypted JWT
+- agent.New() requires the url, psk, and proxy settings
+- agent.New() can return an error
+- agent.Run() does not take a url anymore, it is part of the Agent structure
+- agent.Run() can return an error
+- Server & Agent log file directory permissions changed to 0750
+- Server & Agent log file permissions changed to 0640
+
+### Removed
+
+- Removed http server's check to only allow HTTP/2 traffic so that HTTP/1.1 traffic can be supported
+- Removed Vendor folder updated project to use Go Modules in go.mod
+
+## 0.7.1 - 2019-04-21
+
+### Fixed
+
+-[Issue 69](https://github.com/Ne0nd0g/merlin/issues/69) - Error with modules missing type definition
+-[Issue 70](https://github.com/Ne0nd0g/merlin/issues/70) - Error parsing a shellcode file containing raw bytes
+
 ## 0.7.0 - 2019-04-11
 
 ### Added
